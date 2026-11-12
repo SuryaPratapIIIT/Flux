@@ -1,0 +1,7 @@
+{
+  "name": "flux",
+  "author": "Surya Pratap",
+  "devDependencies": {
+    "tsx": "^4.23.13"
+  }
+}
