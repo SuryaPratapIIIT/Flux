@@ -1,0 +1,207 @@
+import { db } from "../../common/db/index.js";
+import { reservations, stock } from "../../common/db/schema.js";
+import { eq, and, sql, gte, lt } from "drizzle-orm";
+import ApiError from "../../common/utils/api-error.js";
+import { redis } from "../../common/redis/client.js";
+import type { ReserveStockInput } from "./dto/stock.dto.js";
+import logger from "../../common/logger.js";
+
+const RESERVATION_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+const reserveStock = async (input: ReserveStockInput) => {
+  const { productId, warehouseId, quantity, orderId } = input;
+  return db.transaction(async (tx) => {
+    const updated = await tx
+      .update(stock)
+      .set({
+        quantityAvailable: sql`${stock.quantityAvailable} - ${quantity}`,
+        quantityReserved: sql`${stock.quantityReserved} + ${quantity}`,
+      })
+      .where(
+        and(
+          eq(stock.productId, productId),
+          eq(stock.warehouseId, warehouseId),
+          gte(stock.quantityAvailable, quantity),
+        ),
+      )
+      .returning();
+    if (updated.length === 0) {
+      throw ApiError.conflict("Insufficient stock");
+    }
+    const [reservation] = await tx
+      .insert(reservations)
+      .values({
+        productId,
+        warehouseId,
+        quantity,
+        orderId,
+        expiresAt: new Date(Date.now() + RESERVATION_TTL_MS),
+        status: "PENDING",
+      })
+      .returning();
+    if (!reservation) {
+      throw ApiError.internal("Failed to create reservation");
+    }
+    await redis.setex(`reservation:${reservation.id}`, 600, "active");
+    return reservation;
+  });
+};
+
+const releaseReservation = async (reservationId: string) => {
+  await db.transaction(async (tx) => {
+    const updated = await tx
+      .update(reservations)
+      .set({ status: "RELEASED" })
+      .where(
+        and(
+          eq(reservations.id, reservationId),
+          eq(reservations.status, "PENDING"),
+        ),
+      )
+      .returning();
+
+    if (updated.length === 0) {
+      throw ApiError.conflict("Reservation not found or already resolved");
+    }
+
+    const [reservation] = updated;
+    if (!reservation) {
+      throw ApiError.internal("Unexpected error resolving reservation");
+    }
+    await tx
+      .update(stock)
+      .set({
+        quantityAvailable: sql`${stock.quantityAvailable} + ${reservation.quantity}`,
+        quantityReserved: sql`${stock.quantityReserved} - ${reservation.quantity}`,
+      })
+      .where(
+        and(
+          eq(stock.productId, reservation.productId),
+          eq(stock.warehouseId, reservation.warehouseId),
+        ),
+      );
+  });
+
+  await redis.del(`reservation:${reservationId}`);
+};
+const confirmReservation = async (reservationId: string) => {
+  await db.transaction(async (tx) => {
+    const updated = await tx
+      .update(reservations)
+      .set({ status: "CONFIRMED" })
+      .where(
+        and(
+          eq(reservations.id, reservationId),
+          eq(reservations.status, "PENDING"),
+        ),
+      )
+      .returning();
+
+    if (updated.length === 0) {
+      throw ApiError.conflict("Reservation not found or already resolved");
+    }
+
+    const [reservation] = updated;
+    if (!reservation) {
+      throw ApiError.internal("Unexpected error resolving reservation");
+    }
+    await tx
+      .update(stock)
+      .set({
+        quantityReserved: sql`${stock.quantityReserved} - ${reservation.quantity}`,
+      })
+      .where(
+        and(
+          eq(stock.productId, reservation.productId),
+          eq(stock.warehouseId, reservation.warehouseId),
+        ),
+      );
+  });
+
+  await redis.del(`reservation:${reservationId}`);
+};
+const confirmReservationsByOrderId = async (orderId: string) => {
+  const confirmed = await db.transaction(async (tx) => {
+    // Only PENDING rows change, so a redelivered event is a harmless no-op.
+    const rows = await tx
+      .update(reservations)
+      .set({ status: "CONFIRMED" })
+      .where(
+        and(
+          eq(reservations.orderId, orderId),
+          eq(reservations.status, "PENDING"),
+        ),
+      )
+      .returning();
+
+    for (const reservation of rows) {
+      await tx
+        .update(stock)
+        .set({
+          quantityReserved: sql`${stock.quantityReserved} - ${reservation.quantity}`,
+        })
+        .where(
+          and(
+            eq(stock.productId, reservation.productId),
+            eq(stock.warehouseId, reservation.warehouseId),
+          ),
+        );
+    }
+    return rows;
+  });
+
+  for (const reservation of confirmed) {
+    try {
+      await redis.del(`reservation:${reservation.id}`);
+    } catch (error) {
+      logger.warn("failed to delete reservation key after confirm", {
+        reservationId: reservation.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+};
+const findExpiredPendingReservations = async () => {
+  return db
+    .select({ id: reservations.id })
+    .from(reservations)
+    .where(
+      and(
+        eq(reservations.status, "PENDING"),
+        lt(reservations.expiresAt, new Date(Date.now())),
+      ),
+    );
+};
+
+const releaseReservationsByOrderId = async (orderId: string) => {
+  const pending = await db
+    .select({ id: reservations.id })
+    .from(reservations)
+    .where(
+      and(
+        eq(reservations.orderId, orderId),
+        eq(reservations.status, "PENDING"),
+      ),
+    );
+
+  for (const { id } of pending) {
+    try {
+      await releaseReservation(id);
+    } catch (error) {
+      logger.error("failed to release reservation", {
+        orderId,
+        reservationId: id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+};
+
+export {
+  reserveStock,
+  releaseReservation,
+  confirmReservation,
+  confirmReservationsByOrderId,
+  findExpiredPendingReservations,
+  releaseReservationsByOrderId,
+};
