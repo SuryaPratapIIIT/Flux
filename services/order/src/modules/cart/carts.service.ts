@@ -1,0 +1,73 @@
+import { cartItems } from "../../common/db/schema.js";
+import { db } from "../../common/db/index.js";
+import ApiError from "../../common/utils/api-error.js";
+import type { AddCartItemInput, UpdateCartItemInput } from "./dto/cart.dto.js";
+import { sql, and, eq } from "drizzle-orm";
+
+const addToCart = async (userId: string, input: AddCartItemInput) => {
+  const { productId, quantity } = input;
+
+  const [cartItem] = await db
+    .insert(cartItems)
+    .values({
+      userId,
+      productId,
+      quantity,
+    })
+    .onConflictDoUpdate({
+      target: [cartItems.userId, cartItems.productId],
+      set: {
+        quantity: sql`${cartItems.quantity} + ${quantity}`,
+        updatedAt: sql`now()`,
+      },
+    })
+    .returning();
+  if (!cartItem) {
+    throw ApiError.internal("Failed to add item to cart");
+  }
+  return cartItem;
+};
+
+const updateCartItemQuantity = async (
+  userId: string,
+  productId: string,
+  input: UpdateCartItemInput,
+) => {
+  const [cartItem] = await db
+    .update(cartItems)
+    .set({
+      quantity: input.quantity,
+      updatedAt: sql`now()`,
+    })
+    .where(
+      and(eq(cartItems.userId, userId), eq(cartItems.productId, productId)),
+    )
+    .returning();
+  if (!cartItem) {
+    throw ApiError.notFound("Item not found in cart");
+  }
+  return cartItem;
+};
+
+const removeFromCart = async (userId: string, productId: string) => {
+  const [cartItem] = await db
+    .delete(cartItems)
+    .where(
+      and(eq(cartItems.productId, productId), eq(cartItems.userId, userId)),
+    )
+    .returning();
+  if (!cartItem) {
+    throw ApiError.notFound("Item not found in cart");
+  }
+  return cartItem;
+};
+
+const getCart = async (userId: string) => {
+  const cart = await db
+    .select()
+    .from(cartItems)
+    .where(eq(cartItems.userId, userId));
+  return cart;
+};
+
+export { addToCart, updateCartItemQuantity, removeFromCart, getCart };
