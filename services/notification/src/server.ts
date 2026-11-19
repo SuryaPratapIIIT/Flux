@@ -1,0 +1,19 @@
+import "dotenv/config";
+import app from "./app.js";
+import config from "./common/config/index.js";
+import { connectRabbitMQ } from "./common/events/connection.js";
+import { registerNotificationSagaHandlers } from "./modules/notifications/notifications.gateway.js";
+const port = config.port;
+
+const startServer = async () => {
+  await connectRabbitMQ();
+  await registerNotificationSagaHandlers();
+  app.listen(port, () => {
+    console.log(`🚀 Notification service running on port ${port}`);
+  });
+};
+
+startServer().catch((err) => {
+  console.error("Failed to start server", err);
+  process.exit(1);
+});
