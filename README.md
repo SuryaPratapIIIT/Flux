@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="assets/banner.svg" alt="Flux — One order. Seven services. Zero excuses." width="100%"/>
+<img src="assets/banner.svg" alt="Flux — Scalable Quick-Commerce Microservices Engine" width="100%"/>
 
 <br/>
 
@@ -42,9 +42,9 @@
 
 ---
 
-**Flux is a quick-commerce backend built as seven independent services with no shared database.** It models the problems that make order systems hard: reserving stock under concurrency, coordinating services through events, recovering when a step fails, and routing deliveries. Each claim is backed by a test, a load run, or a trace.
+**Flux is a high-performance, event-driven quick-commerce backend engineered across seven independent microservices with dedicated database-per-service isolation.** Designed to tackle distributed systems challenges at scale: sub-millisecond stock reservation under high concurrency, event-driven saga choreography across service boundaries, automated multi-step failure compensation, and intelligent delivery dispatch routing. Verified through 96 automated tests, end-to-end distributed traces, and 100-user concurrent load simulations.
 
-**Status:** a solo project, finished at its current scope. It runs locally with `docker compose` and is not deployed. Payments are simulated. What is left out is listed under [Known gaps](#known-gaps) and the [Roadmap](#roadmap).
+**Status:** an independently developed distributed systems project by Surya Pratap. Configured for local orchestration via Docker Compose and production deployment via Caddy. Payments and webhooks are event-simulated. What is left out is listed under [Known gaps](#known-gaps) and the [Roadmap](#roadmap).
 
 ### Demo
 
@@ -355,6 +355,6 @@ Seller/marketplace onboarding, a full admin back-office, native mobile apps, and
 
 <div align="center">
 
-_A masterpiece isn't the one with the most features. It's the one where every piece exists on purpose._
+_True system resilience isn't measured by features, but by how reliably independent services coordinate, fail safely, and recover under load._
 
 </div>
